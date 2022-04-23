@@ -25,14 +25,14 @@ def parse_args(args=None):
         usage='train.py [<args>] [-h | --help]'
     )
 
-    parser.add_argument('--cuda', default=False,
+    parser.add_argument('--cuda', default=True,
                         action='store_true', help='use GPU')
     parser.add_argument('--do_train', default=True, action='store_true')
     parser.add_argument('--do_valid', default=True, action='store_true')
     parser.add_argument('--do_test', default=True, action='store_true')
     parser.add_argument('--evaluate_train', action='store_true',
                         help='Evaluate on training data')
-    parser.add_argument('--model', default='ConvE', type=str)
+    parser.add_argument('--model', default='TuckER', type=str)
     parser.add_argument('--data_path', type=str, default='data/umls')
 
     parser.add_argument('-d', '--hidden_dim', default=256, type=int)
@@ -59,6 +59,7 @@ def parse_args(args=None):
                         default='saved/models/wn18rr', type=str)
     parser.add_argument('--max_steps', default=40000, type=int)
     parser.add_argument('--warm_up_ratio', default=0.1, type=float)
+
     # For DistMult based warm-up for KG embedding
     parser.add_argument('--warm_up_steps', default=-1, type=int)
     parser.add_argument('--reszero', default=1, type=int)
@@ -94,6 +95,11 @@ def parse_args(args=None):
                         help="0: onevsall, 1: kvsall")
     parser.add_argument('--patience', type=int, default=30,
                         help="used for early stop")
+    parser.add_argument('-de', '--double_entity_embedding',
+                        action='store_false')
+    parser.add_argument(
+        '-dr', '--double_relation_embedding', action='store_false')
+
     return parser.parse_args(args)
 
 
@@ -191,7 +197,6 @@ def train_dag_kge_model(args, nentity, nrelation, ntriples, all_true_triples, tr
     :param test_triples:
     :return:
     """
-    # +++++++
     data_path = args.data_path
     min_baseline_mrr = 0.05
     if 'FB' in data_path:
@@ -212,7 +217,6 @@ def train_dag_kge_model(args, nentity, nrelation, ntriples, all_true_triples, tr
         warm_up_step = 300 * step_in_epoch
     args.warm_up_steps = warm_up_step
 
-    # +++++++
     kge_model = KGEModel(nentity=nentity, nrelation=nrelation,
                          ntriples=ntriples, args=args)
     if args.cuda:
@@ -255,7 +259,6 @@ def train_dag_kge_model(args, nentity, nrelation, ntriples, all_true_triples, tr
         logging.info('learning_rate = %f' % args.learning_rate)
         training_logs = []
         if args.warm_up_steps > 0:
-            # ++++++++++++++++++++++++++++++++++
             current_learning_rate = args.learning_rate
             if args.adam_weight_decay <= 0:
                 adam_weight_decay = 0
@@ -267,7 +270,6 @@ def train_dag_kge_model(args, nentity, nrelation, ntriples, all_true_triples, tr
                              weight_decay=adam_weight_decay)
             scheduler = CosineAnnealingLR(
                 optimizer=optimizer, T_max=args.max_steps, eta_min=1e-6)
-            # ++++++++++++++++++++++++++++++++++
             for step in range(init_step, args.warm_up_steps):
                 log = kge_model.train_step(
                     kge_model, optimizer, train_iterator, args, True)
@@ -296,8 +298,6 @@ def train_dag_kge_model(args, nentity, nrelation, ntriples, all_true_triples, tr
                 metrics = kge_model.test_step(
                     kge_model, test_triples, all_true_triples, args, None, True)
                 log_metrics('Test', step, metrics)
-        # +++++++++++++++++++
-        # +++++++++++++++++++
         init_step = 0
         num_warmup_steps = int(args.max_steps * args.warm_up_ratio)
         current_learning_rate = args.learning_rate
@@ -309,7 +309,6 @@ def train_dag_kge_model(args, nentity, nrelation, ntriples, all_true_triples, tr
                          weight_decay=adam_weight_decay)
         scheduler = WarmupCosineSchedule(
             optimizer, warmup_steps=num_warmup_steps, t_total=args.max_steps)  # PyTorch scheduler
-        # ++++++++++++++++++++++++++++++++++
         # Training Loop
         best_valid_mrr = 0.0
         best_model_name = ''

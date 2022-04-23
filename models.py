@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 
 import math
+import numpy as np
 
 
 class ConvE(torch.nn.Module):
@@ -126,3 +127,87 @@ class TransConvE(torch.nn.Module):
         scores = self.score_computation(
             e1_emb=e1_emb, rel_emb=rel_emb, all_ent_emb=all_ent_emb)
         return scores
+
+
+class DistMult(torch.nn.Module):
+    def __init__(self, args):
+        super(DistMult, self).__init__()
+        self.inp_drop = torch.nn.Dropout(args.input_drop)
+
+    def forward(self, e1_emb, rel_emb, all_ent_emb, inverse_rel_emb=None):
+        e1_embedded = self.inp_drop(e1_emb)
+        rel_embedded = self.inp_drop(rel_emb)
+        if inverse_rel_emb is not None:
+            inv_rel_embedded = self.inp_drop(inverse_rel_emb)
+            comb_rel_embedded = (rel_embedded + inv_rel_embedded) * 0.5
+            pred = torch.mm(e1_embedded*comb_rel_embedded,
+                            all_ent_emb.transpose(1, 0))
+        else:
+            pred = torch.mm(e1_embedded*rel_embedded,
+                            all_ent_emb.transpose(1, 0))
+        return pred
+
+
+class TuckER(torch.nn.Module):
+    def __init__(self, args):
+        super(TuckER, self).__init__()
+
+        self.input_dropout = torch.nn.Dropout(args.input_drop)
+        self.hidden_dropout = torch.nn.Dropout(args.fea_drop)
+
+        self.ent_emb_dim = args.ent_embed_dim
+        self.rel_emb_dim = args.rel_embed_dim
+        if args.cuda:
+            self.W = torch.nn.Parameter(
+                torch.tensor(np.random.uniform(-1, 1, (self.rel_emb_dim, self.ent_emb_dim, self.ent_emb_dim)),
+                             dtype=torch.float, device='cuda', requires_grad=True), requires_grad=True)
+        else:
+            self.W = torch.nn.Parameter(
+                torch.tensor(np.random.uniform(-1, 1, (self.rel_emb_dim, self.ent_emb_dim, self.ent_emb_dim)),
+                             dtype=torch.float, requires_grad=True), requires_grad=True)
+
+        self.bn0 = torch.nn.BatchNorm1d(self.ent_emb_dim)
+        self.bn1 = torch.nn.BatchNorm1d(self.ent_emb_dim)
+
+    def forward(self, e1_emb, rel_emb, all_ent_emb):
+        e1 = e1_emb
+        x = self.bn0(e1_emb)
+        x = self.input_dropout(x)
+        x = x.view(-1, 1, e1.size(1))
+
+        r = rel_emb
+        W_mat = torch.mm(r, self.W.view(r.size(1), -1))
+        W_mat = W_mat.view(-1, e1.size(1), e1.size(1))
+        W_mat = self.hidden_dropout(W_mat)
+
+        x = torch.bmm(x, W_mat)
+        x = x.view(-1, e1.size(1))
+        x = self.bn1(x)
+        x = self.hidden_dropout(x)
+        x = torch.mm(x, all_ent_emb.transpose(1, 0))
+        return x
+
+
+class ComplEx(torch.nn.Module):
+    def __init__(self, args):
+        super(ComplEx, self).__init__()
+        self.ent_emb_dim = args.ent_embed_dim * 2 if args.double_entity_embedding else args.ent_embed_dim
+        self.rel_emb_dim = args.rel_embed_dim * 2 if args.double_relation_embedding else args.rel_embed_dim
+        self.input_dropout = torch.nn.Dropout(args.input_drop)
+        self.bn0 = torch.nn.BatchNorm1d(self.ent_emb_dim // 2)
+        self.bn1 = torch.nn.BatchNorm1d(self.ent_emb_dim // 2)
+
+    def forward(self, e1_emb, rel_emb, all_ent_emb):
+        re_e1_emb, im_e1_emb = torch.chunk(e1_emb, 2, dim=-1)
+        re_rel_emb, im_rel_emb = torch.chunk(rel_emb, 2, dim=-1)
+
+        re_e1_emb = self.bn0(re_e1_emb)
+        re_e1_emb = self.input_dropout(re_e1_emb)
+        im_e1_emb = self.bn1(im_e1_emb)
+        im_e1_emb = self.input_dropout(im_e1_emb)
+        pred = torch.mm(re_e1_emb * re_rel_emb, all_ent_emb.transpose(1, 0)) + \
+            torch.mm(re_e1_emb * im_rel_emb, all_ent_emb.transpose(1, 0)) + \
+            torch.mm(im_e1_emb * re_rel_emb, all_ent_emb.transpose(1, 0)) - \
+            torch.mm(im_e1_emb * im_rel_emb, all_ent_emb.transpose(1, 0))
+        pred = torch.sigmoid(pred)
+        return pred

@@ -8,7 +8,7 @@ from data_loader import BiTrainDataset, TestDataset
 import logging
 
 
-from models import ConvE, TransConvE
+from models import ConvE, TransConvE, DistMult, TuckER, ComplEx
 
 
 class KGEModel(torch.nn.Module):
@@ -27,11 +27,8 @@ class KGEModel(torch.nn.Module):
         self._nrelation = nrelation
         self._ntriples = ntriples
 
-        self._ent_emb_size = args.ent_embed_dim
-        self._rel_emb_size = args.rel_embed_dim
-
-        self.embed_dim = args.embed_dim
-        self.hidden_dim = args.hidden_dim
+        self._ent_emb_size = args.ent_embed_dim * 2 if args.double_entity_embedding else args.ent_embed_dim
+        self._rel_emb_size = args.rel_embed_dim * 2 if args.double_relation_embedding else args.rel_embed_dim
 
         self.entity_embedding = torch.nn.Parameter(
             torch.zeros(nentity, self._ent_emb_size), requires_grad=True)
@@ -47,7 +44,9 @@ class KGEModel(torch.nn.Module):
         elif self.model_name == 'TransConvE':
             self.score_function = TransConvE(num_entities=nentity, args=args)
         elif self.model_name == 'TuckER':
-            self.score_function = TuckER(args=args)
+            self.score_function = ComplEx(args=args)
+        elif self.model_name == 'ComplEx':
+            self.score_function = ComplEx(args=args)
         else:
             raise ValueError('model %s not supported' % self.model_name)
 
@@ -105,6 +104,9 @@ class KGEModel(torch.nn.Module):
                 # The score function is not symetric
                 scores = self.score_function(ent_embed, relation, entity_embed)
             elif self.model_name == 'TuckER':
+                scores = self.score_function(ent_embed, relation, entity_embed)
+            elif self.model_name == 'ComplEx':
+                # Bug
                 scores = self.score_function(ent_embed, relation, entity_embed)
             else:
                 raise ValueError('model %s not supported' % self.model_name)
