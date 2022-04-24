@@ -95,6 +95,15 @@ def parse_args(args=None):
     parser.add_argument('--patience', type=int, default=30,
                         help="used for early stop")
 
+    parser.add_argument('--k_w',	  	dest="k_w", 		default=10,
+                        type=int, 		help='Width of the reshaped matrix')
+    parser.add_argument('--k_h',	  	dest="k_h", 		default=20,
+                        type=int, 		help='Height of the reshaped matrix')
+    parser.add_argument('--num_filters',  	dest="num_filters",      	default=96,
+                        type=int,       	help='Number of filters in convolution')
+    parser.add_argument('--perm',      	dest="perm",          	default=1,
+                        type=int,       	help='Number of Feature rearrangement to use')
+
     return parser.parse_args(args)
 
 

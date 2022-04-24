@@ -211,3 +211,106 @@ class ComplEx(torch.nn.Module):
             torch.mm(im_e1_emb * im_rel_emb, all_ent_emb.transpose(1, 0))
         pred = torch.sigmoid(pred)
         return pred
+
+
+class InteractE(torch.nn.Module):
+    def __init__(self, args):
+        super(InteractE, self).__init__()
+        self.ent_emb_dim = args.ent_embed_dim
+        self.rel_emb_dim = args.rel_embed_dim
+        self.num_filters = args.num_filters
+        self.perm = args.perm
+        self.kernel_size = args.kernel_size
+
+        self.inp_drop = torch.nn.Dropout(args.input_drop)
+        self.hidden_drop = torch.nn.Dropout(args.fea_drop)
+        self.feature_map_drop = torch.nn.Dropout(args.fea_drop)
+        self.bn0 = torch.nn.BatchNorm2d(self.perm)
+
+        self.flat_size_height = args.k_h
+        self.flat_size_width = 2 * args.k_w
+        self.padding = 0
+        self.bn1 = torch.nn.BatchNorm2d(self.num_filters*self.perm)
+        self.flat_size = self.flat_size_height * \
+            self.flat_size_width * self.num_filters*self.perm
+        self.bn2 = torch.nn.BatchNorm1d(self.ent_emb_dim)
+        self.fc = torch.nn.Linear(self.flat_size, self.ent_emb_dim)
+
+        self.chequer_perm = self.get_chequer_perm()
+
+        self.register_parameter('conv_filt', torch.nn.Parameter(
+            torch.zeros(self.num_filters, 1, self.kernel_size,  self.kernel_size)))
+        torch.nn.init.xavier_normal_(self.conv_filt)
+
+    def circular_padding_chw(self, batch, padding):
+        upper_pad = batch[..., -padding:, :]
+        lower_pad = batch[..., :padding, :]
+        temp = torch.cat([upper_pad, batch, lower_pad], dim=2)
+
+        left_pad = temp[..., -padding:]
+        right_pad = temp[..., :padding]
+        padded = torch.cat([left_pad, temp, right_pad], dim=3)
+        return padded
+
+    def get_chequer_perm(self):
+        ent_perm = np.int32([np.random.permutation(self.ent_emb_dim)
+                            for _ in range(self.perm)])
+        rel_perm = np.int32([np.random.permutation(self.ent_emb_dim)
+                            for _ in range(self.perm)])
+        comb_idx = []
+        for k in range(self.perm):
+            temp = []
+            ent_idx, rel_idx = 0, 0
+            for i in range(self.flat_size_height):
+                for j in range(self.flat_size_width // 2):
+                    if k % 2 == 0:
+                        if i % 2 == 0:
+                            temp.append(ent_perm[k, ent_idx])
+                            ent_idx += 1
+                            temp.append(rel_perm[k, rel_idx]+self.ent_emb_dim)
+                            rel_idx += 1
+                        else:
+                            temp.append(rel_perm[k, rel_idx]+self.ent_emb_dim)
+                            rel_idx += 1
+                    else:
+                        if i % 2 == 0:
+                            temp.append(rel_perm[k, rel_idx]+self.ent_emb_dim)
+                            rel_idx += 1
+                            temp.append(ent_perm[k, ent_idx])
+                            ent_idx += 1
+                        else:
+                            temp.append(ent_perm[k, ent_idx])
+                            ent_idx += 1
+                            temp.append(rel_perm[k, rel_idx]+self.ent_emb_dim)
+                            rel_idx += 1
+            comb_idx.append(temp)
+        chequer_perm = torch.LongTensor(np.int32(comb_idx)).cuda()
+        return chequer_perm
+
+    def score_computation(self, e1_emb, rel_emb, all_ent_emb):
+        comb_emb = torch.cat([e1_emb, rel_emb], dim=1)
+        chequer_perm = comb_emb[:, self.chequer_perm]
+        stack_inp = chequer_perm.reshape(
+            (-1, self.perm, self.flat_size_width, self.flat_size_height))
+        stack_inp = self.bn0(stack_inp)
+        x = self.inp_drop(stack_inp)
+        x = self.circular_padding_chw(x, self.kernel_size // 2)
+        x = F.conv2d(x, self.conv_filt.repeat(self.perm, 1, 1, 1),
+                     padding=self.padding, groups=self.perm)
+        x = self.bn1(x)
+        x = F.relu(x)
+        x = self.feature_map_drop(x)
+        x = x.view(-1, self.flat_size)
+        x = self.fc(x)
+        x = self.hidden_drop(x)
+        x = self.bn2(x)
+        x = F.relu(x)
+        x = torch.mm(x, all_ent_emb.transpose(1, 0))
+        x += self.b.expand_as(x)
+        scores = x
+        return scores
+
+    def forward(self, e1_emb, rel_emb, all_ent_emb):
+        scores = self.score_computation(
+            e1_emb=e1_emb, rel_emb=rel_emb, all_ent_emb=all_ent_emb)
+        return scores
