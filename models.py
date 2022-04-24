@@ -314,3 +314,63 @@ class InteractE(torch.nn.Module):
         scores = self.score_computation(
             e1_emb=e1_emb, rel_emb=rel_emb, all_ent_emb=all_ent_emb)
         return scores
+
+
+class HypER(torch.nn.Module):
+    def __init__(self, args):
+        super(HypER, self).__init__()
+        self.ent_emb_dim = args.ent_embed_dim
+        self.rel_emb_dim = args.rel_embed_dim
+
+        self.in_channels = args.in_channels
+        self.out_channels = args.out_channels
+        self.kernel_h = args.kernel_h
+        self.kernel_w = args.kernel_w
+
+        self.inp_drop = torch.nn.Dropout(args.input_drop)
+        self.hidden_drop = torch.nn.Dropout(args.fea_drop)
+        self.feature_map_drop = torch.nn.Dropout(args.fea_drop)
+
+        self.bn0 = torch.nn.BatchNorm2d(self.in_channels)
+        self.bo1 = torch.nn.BatchNorm2d(self.out_channels)
+        self.bn2 = torch.nn.BatchNorm1d(self.ent_emb_dim)
+        fc_length = (1-self.kernel_h+1)*(self.ent_emb_dim -
+                                         self.kernel_w+1)*self.out_channels
+        self.fc = torch.nn.Linear(fc_length, self.ent_emb_dim)
+        fc1_length = self.in_channels*self.out_channels*self.kernel_h*self.kernel_w
+        self.fc1 = torch.nn.Linear(self.rel_emb_dim, fc1_length)
+
+    def score_computation(self, e1_emb, rel_emb, all_ent_emb):
+        e1_emb = e1_emb.view(-1, 1, 1, e1_emb.size(1))
+        x = self.bn0(e1_emb)
+        x = self.inp_drop(x)
+
+        k = self.fc1(rel_emb)
+        k = k.view(-1, self.in_channels, self.out_channels,
+                   self.kernel_h, self.kernel_w)
+        k = k.view(e1_emb.size(0)*self.in_channels *
+                   self.out_channels, 1, self.kernel_h, self.kernel_w)
+
+        x = x.permute(1, 0, 2, 3)
+
+        x = F.conv2d(x, k, groups=e1_emb.size(0))
+        x = x.view(e1_emb.size(0), 1, self.out_channels, 1 -
+                   self.kernel_h+1, e1_emb.size(3)-self.kernel_w+1)
+        x = x.permute(0, 3, 4, 1, 2)
+        x = torch.sum(x, dim=3)
+        x = x.permute(0, 3, 1, 2).contiguous()
+
+        x = self.bn1(x)
+        x = self.feature_map_drop(x)
+        x = x.view(e1_emb.size(0), -1)
+        x = self.fc(x)
+        x = self.hidden_drop(x)
+        x = self.bn2(x)
+        x = F.relu(x)
+        x = torch.mm(x, all_ent_emb.weight.transpose(1, 0))
+        return x
+
+    def forward(self, e1_emb, rel_emb, all_ent_emb):
+        scores = self.score_computation(
+            e1_emb=e1_emb, rel_emb=rel_emb, all_ent_emb=all_ent_emb)
+        return scores
