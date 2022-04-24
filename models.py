@@ -191,15 +191,15 @@ class TuckER(torch.nn.Module):
 class ComplEx(torch.nn.Module):
     def __init__(self, args):
         super(ComplEx, self).__init__()
-        self.ent_emb_dim = args.ent_embed_dim * 2 if args.double_entity_embedding else args.ent_embed_dim
-        self.rel_emb_dim = args.rel_embed_dim * 2 if args.double_relation_embedding else args.rel_embed_dim
+        self.ent_emb_dim = args.ent_embed_dim
+        self.rel_emb_dim = args.rel_embed_dim
         self.input_dropout = torch.nn.Dropout(args.input_drop)
-        self.bn0 = torch.nn.BatchNorm1d(self.ent_emb_dim // 2)
-        self.bn1 = torch.nn.BatchNorm1d(self.ent_emb_dim // 2)
+        self.bn0 = torch.nn.BatchNorm1d(self.ent_emb_dim)
+        self.bn1 = torch.nn.BatchNorm1d(self.ent_emb_dim)
 
     def forward(self, e1_emb, rel_emb, all_ent_emb):
-        re_e1_emb, im_e1_emb = torch.chunk(e1_emb, 2, dim=-1)
-        re_rel_emb, im_rel_emb = torch.chunk(rel_emb, 2, dim=-1)
+        re_e1_emb, im_e1_emb = e1_emb, e1_emb
+        re_rel_emb, im_rel_emb = rel_emb, rel_emb
 
         re_e1_emb = self.bn0(re_e1_emb)
         re_e1_emb = self.input_dropout(re_e1_emb)

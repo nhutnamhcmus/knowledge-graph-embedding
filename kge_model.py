@@ -27,8 +27,8 @@ class KGEModel(torch.nn.Module):
         self._nrelation = nrelation
         self._ntriples = ntriples
 
-        self._ent_emb_size = args.ent_embed_dim * 2 if args.double_entity_embedding else args.ent_embed_dim
-        self._rel_emb_size = args.rel_embed_dim * 2 if args.double_relation_embedding else args.rel_embed_dim
+        self._ent_emb_size = args.ent_embed_dim
+        self._rel_emb_size = args.rel_embed_dim
 
         self.entity_embedding = torch.nn.Parameter(
             torch.zeros(nentity, self._ent_emb_size), requires_grad=True)
@@ -101,12 +101,11 @@ class KGEModel(torch.nn.Module):
                 scores = self.score_function(
                     ent_embed, relation, entity_embed)  # The score is symetric
             elif self.model_name == 'ConvE' or self.model_name == 'TransConvE':
-                # The score function is not symetric
+                # the score function is not symetric
                 scores = self.score_function(ent_embed, relation, entity_embed)
             elif self.model_name == 'TuckER':
                 scores = self.score_function(ent_embed, relation, entity_embed)
             elif self.model_name == 'ComplEx':
-                # Bug
                 scores = self.score_function(ent_embed, relation, entity_embed)
             else:
                 raise ValueError('model %s not supported' % self.model_name)

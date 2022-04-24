@@ -25,14 +25,13 @@ def parse_args(args=None):
         usage='train.py [<args>] [-h | --help]'
     )
 
-    parser.add_argument('--cuda', default=True,
-                        action='store_true', help='use GPU')
+    parser.add_argument('--cuda', action='store_true', help='use GPU')
     parser.add_argument('--do_train', default=True, action='store_true')
     parser.add_argument('--do_valid', default=True, action='store_true')
     parser.add_argument('--do_test', default=True, action='store_true')
     parser.add_argument('--evaluate_train', action='store_true',
                         help='Evaluate on training data')
-    parser.add_argument('--model', default='TuckER', type=str)
+    parser.add_argument('--model', default='ComplEx', type=str)
     parser.add_argument('--data_path', type=str, default='data/umls')
 
     parser.add_argument('-d', '--hidden_dim', default=256, type=int)
@@ -95,10 +94,6 @@ def parse_args(args=None):
                         help="0: onevsall, 1: kvsall")
     parser.add_argument('--patience', type=int, default=30,
                         help="used for early stop")
-    parser.add_argument('-de', '--double_entity_embedding',
-                        action='store_false')
-    parser.add_argument(
-        '-dr', '--double_relation_embedding', action='store_false')
 
     return parser.parse_args(args)
 
@@ -149,6 +144,35 @@ def read_triple(file_path, entity2id, relation2id):
             h, r, t = line.strip().split('\t')
             triples.append((entity2id[h], relation2id[r], entity2id[t]))
     return triples
+
+
+def rel_type(triples):
+    count_r = {}
+    count_h = {}
+    count_t = {}
+    for h, r, t in triples:
+        if r not in count_r:
+            count_r[r] = 0
+            count_h[r] = set()
+            count_t[r] = set()
+        count_r[r] += 1
+        count_h[r].add(h)
+        count_t[r].add(t)
+    r_tp = {}
+    for r in range(len(count_r)):
+        tph = count_r[r] / len(count_h[r])
+        hpt = count_r[r] / len(count_t[r])
+        if hpt < 1.5:
+            if tph < 1.5:
+                r_tp[r] = 1  # 1-1
+            else:
+                r_tp[r] = 2  # 1-M
+        else:
+            if tph < 1.5:
+                r_tp[r] = 3  # M-1
+            else:
+                r_tp[r] = 4  # M-M
+    return r_tp
 
 
 def set_logger(args):
@@ -221,6 +245,7 @@ def train_dag_kge_model(args, nentity, nrelation, ntriples, all_true_triples, tr
                          ntriples=ntriples, args=args)
     if args.cuda:
         kge_model = kge_model.cuda()
+
     logging.info('Model Parameter Configuration:')
     for name, param in kge_model.named_parameters():
         logging.info('Parameter %s: %s, require_grad = %s' %
@@ -305,10 +330,12 @@ def train_dag_kge_model(args, nentity, nrelation, ntriples, all_true_triples, tr
             adam_weight_decay = 0
         else:
             adam_weight_decay = args.adam_weight_decay
-        optimizer = Adam(params=filter(lambda p: p.requires_grad, kge_model.parameters()), lr=current_learning_rate,
-                         weight_decay=adam_weight_decay)
-        scheduler = WarmupCosineSchedule(
-            optimizer, warmup_steps=num_warmup_steps, t_total=args.max_steps)  # PyTorch scheduler
+        optimizer = Adam(params=filter(lambda p: p.requires_grad, kge_model.parameters()),
+                         lr=current_learning_rate, betas=(
+            args.adam_beta1, args.adam_beta2),
+            weight_decay=adam_weight_decay)
+        scheduler = CosineAnnealingLR(
+            optimizer=optimizer, T_max=args.max_steps, eta_min=1e-6)
         # Training Loop
         best_valid_mrr = 0.0
         best_model_name = ''
